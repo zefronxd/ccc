@@ -1,0 +1,2 @@
+- [Persian localization](persian-localization.md) — keep incomplete locale files independent and use Persian fallbacks instead of silently exposing English.
+- [Groq chatbot responses](groq-chatbot.md) — parse OpenAI-compatible replies through choices → message → content and distinguish model-access errors from missing replies.

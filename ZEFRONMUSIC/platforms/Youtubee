@@ -1,0 +1,864 @@
+import os
+import re
+import json
+import yt_dlp
+import random
+import logging
+import asyncio
+import tempfile
+import aiohttp
+from os import getenv
+from typing import Union
+from pyrogram.enums import MessageEntityType
+from pyrogram.types import Message
+from py_yt import VideosSearch, Playlist
+from ZEFRONMUSIC.utils.database import is_on_off
+from ZEFRONMUSIC.utils.formatters import time_to_seconds 
+
+# Hardcoded cookies as fallback
+HARDCODED_COOKIES = """# Netscape HTTP Cookie File
+# https://curl.haxx.se/rfc/cookie_spec.html
+# This is a generated file! Do not edit.
+
+.youtube.com	TRUE	/	TRUE	1786820619	PREF	f4=4000000&tz=Asia.Calcutta&f7=100
+.youtube.com	TRUE	/	FALSE	1786718362	HSID	AZ6Ss-N5G7ikI8GJG
+.youtube.com	TRUE	/	TRUE	1786718362	SSID	ANr7N4jTducFotrlc
+.youtube.com	TRUE	/	FALSE	1786718362	APISID	E8SWJGBv2CN8NCd7/AWI75uMLfeTuF5AO3
+.youtube.com	TRUE	/	TRUE	1786718362	SAPISID	BSwotq3K_osWdRba/AJ07-3YcjI9m_ZicB
+.youtube.com	TRUE	/	TRUE	1786718362	__Secure-1PAPISID	BSwotq3K_osWdRba/AJ07-3YcjI9m_ZicB
+.youtube.com	TRUE	/	TRUE	1786718362	__Secure-3PAPISID	BSwotq3K_osWdRba/AJ07-3YcjI9m_ZicB
+.youtube.com	TRUE	/	TRUE	1786293217	LOGIN_INFO	AFmmF2swRAIgaPpnC3x0PEJjjygxg1T6UblT-_FPz5DwDBwO0Bgk5AECICwnHi_IWgt6kCUDuA6qirMHDCzZzfLB3CIXKtLrWcUB:QUQ3MjNmeGN5N3VKY1NsSjduRC1UMUZQRko0d0ZUbzBKU2doY3paU1lxN2NHNWtVM3hKaUx0a00zLU93U3pZdS13MFdwZ1FsWFU1aXhxR2phNnFMQzJYZVFVQkNnYXFyeVVoZ1RXaDE3NTJWd3R1bFNUUTVmMUxrVkJXSW5OX0g2bWE2UkFObDMwRjVVdGtoMXNWUzNCRXlUU3l5UjBNLXhR
+.youtube.com	TRUE	/	FALSE	1786718362	SID	g.a0006wjx1HfRgmPsuDDr85_KNQTldgh0jdNPKTFnTdv7yJLZg0wJHVkLOJbwzN782u8xTK8HowACgYKAS8SAQwSFQHGX2MiESB1Q1A7VrgDDZrme0eobhoVAUF8yKoLY4r3fTH_Htmh2UvS3x-h0076
+.youtube.com	TRUE	/	TRUE	1786718362	__Secure-1PSID	g.a0006wjx1HfRgmPsuDDr85_KNQTldgh0jdNPKTFnTdv7yJLZg0wJer-x7L1qKDlN_ZbQxnl3AAACgYKAQUSAQwSFQHGX2Mi0Yo06uVBE80l2EJ468oP5hoVAUF8yKr_9FGoK6gF3YRNsPM3wCtX0076
+.youtube.com	TRUE	/	TRUE	1786718362	__Secure-3PSID	g.a0006wjx1HfRgmPsuDDr85_KNQTldgh0jdNPKTFnTdv7yJLZg0wJ1lUP5q5azEOelXLuAERLfgACgYKAZASAQwSFQHGX2MibyfTY9WGSjbonhNQhJt8zxoVAUF8yKqGPk0vZyQ2xvuOeVOsxlc30076
+.youtube.com	TRUE	/	TRUE	0	wide	1
+.youtube.com	TRUE	/	TRUE	1786822560	__Secure-1PSIDTS	sidts-CjQBBj1CYuO6hzOzM3nDqL6N41qlkM220nBs7zeAmFpxfG8zMX4Rb0zzvAwVEa_7NTpspUEbEAA
+.youtube.com	TRUE	/	TRUE	1786822560	__Secure-3PSIDTS	sidts-CjQBBj1CYuO6hzOzM3nDqL6N41qlkM220nBs7zeAmFpxfG8zMX4Rb0zzvAwVEa_7NTpspUEbEAA
+.youtube.com	TRUE	/	FALSE	1786822560	SIDCC	AKEyXzVnjirDlQBJxhH-_0X_kj-XsraOSqHZgRbpteY5HkFAxxmOJpEMv0OKLAsEOKGZX2-OU_U
+.youtube.com	TRUE	/	TRUE	1786822560	__Secure-1PSIDCC	AKEyXzU5m1uKA7I6h-FpMCqSimonTzHWB0fGlIgo1RsQdOXYmFkqisKr7Sdq8lb-y9V-PuPgPA
+.youtube.com	TRUE	/	TRUE	1786822560	__Secure-3PSIDCC	AKEyXzViWrHfxba5jfA8-OzxyBMjQ6ENUw_kZxlMCnL9IQ63KDIPwB3zj45LsSLT4qCUDF6zLcc
+.youtube.com	TRUE	/	TRUE	1786812677	VISITOR_INFO1_LIVE	bm_Jiq98kyw
+.youtube.com	TRUE	/	TRUE	1786812677	VISITOR_PRIVACY_METADATA	CgJJThIEGgAgTA%3D%3D
+.youtube.com	TRUE	/	TRUE	1786812676	__Secure-ROLLOUT_TOKEN	CO_2k4e6_-LopgEQ6dPNo5bzigMY563inbzekgM%3D
+.youtube.com	TRUE	/	TRUE	0	YSC	5s-aghU19mk
+"""
+
+# API fallback configuration
+YOUR_API_URL = None
+FALLBACK_API_URL = "https://shrutibots.site"
+
+# Cache for hardcoded cookie file path
+_hardcoded_cookie_file = None
+
+
+def get_hardcoded_cookie_file():
+    """Create a temporary file with hardcoded cookies and return its path."""
+    global _hardcoded_cookie_file
+    if _hardcoded_cookie_file and os.path.exists(_hardcoded_cookie_file):
+        return _hardcoded_cookie_file
+    
+    try:
+        temp_fd, temp_path = tempfile.mkstemp(suffix='.txt', prefix='youtube_cookies_')
+        with os.fdopen(temp_fd, 'w') as f:
+            f.write(HARDCODED_COOKIES)
+        _hardcoded_cookie_file = temp_path
+        return temp_path
+    except Exception as e:
+        print(f"Error creating hardcoded cookie file: {e}")
+        return None
+
+
+async def load_api_url():
+    """Load API URL from remote source."""
+    global YOUR_API_URL
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://pastebin.com/raw/rLsBhAQa",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as response:
+                if response.status == 200:
+                    content = await response.text()
+                    YOUR_API_URL = content.strip()
+                else:
+                    YOUR_API_URL = FALLBACK_API_URL
+    except Exception:
+        YOUR_API_URL = FALLBACK_API_URL
+
+
+# Initialize API URL at module load
+try:
+    loop = asyncio.get_event_loop()
+    if loop.is_running():
+        asyncio.create_task(load_api_url())
+    else:
+        loop.run_until_complete(load_api_url())
+except RuntimeError:
+    # Event loop not available at import time; URL will be loaded lazily.
+    pass
+
+
+async def download_via_api(link: str, media_type: str = "audio") -> Union[str, None]:
+    """Download audio/video using API fallback."""
+    global YOUR_API_URL
+    
+    if not YOUR_API_URL:
+        await load_api_url()
+        if not YOUR_API_URL:
+            YOUR_API_URL = FALLBACK_API_URL
+    
+    video_id = link.split("v=")[-1].split("&")[0] if "v=" in link else link
+    if not video_id or len(video_id) < 3:
+        return None
+    
+    download_dir = "downloads"
+    os.makedirs(download_dir, exist_ok=True)
+    file_path = os.path.join(download_dir, f"{video_id}.{'mp3' if media_type == 'audio' else 'mp4'}")
+    
+    if os.path.exists(file_path):
+        return file_path
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            params = {"url": video_id, "type": media_type}
+            
+            async with session.get(
+                f"{YOUR_API_URL}/download",
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as response:
+                if response.status != 200:
+                    return None
+                
+                data = await response.json()
+                download_token = data.get("download_token")
+                if not download_token:
+                    return None
+                
+                stream_url = f"{YOUR_API_URL}/stream/{video_id}?type={media_type}"
+                
+                async with session.get(
+                    stream_url,
+                    headers={"X-Download-Token": download_token},
+                    timeout=aiohttp.ClientTimeout(total=600 if media_type == "video" else 300),
+                ) as file_response:
+                    if file_response.status != 200:
+                        return None
+                    
+                    with open(file_path, "wb") as f:
+                        async for chunk in file_response.content.iter_chunked(16384):
+                            f.write(chunk)
+                    
+                    return file_path
+    except Exception as e:
+        print(f"API download failed: {e}")
+        return None
+
+
+def cookie_txt_file():
+    """Get cookie file - prioritize hardcoded cookies first, then fallback to cookies directory."""
+    # First try hardcoded cookies
+    hardcoded = get_hardcoded_cookie_file()
+    if hardcoded:
+        return hardcoded
+    
+    # Fallback to cookies directory
+    cookie_dir = f"{os.getcwd()}/cookies"
+    if not os.path.exists(cookie_dir):
+        return None
+    cookies_files = [f for f in os.listdir(cookie_dir) if f.endswith(".txt")]
+    if not cookies_files:
+        return None
+    cookie_file = os.path.join(cookie_dir, random.choice(cookies_files))
+    return cookie_file
+
+
+async def download_song(link: str):
+    """Download song - try hardcoded cookies first, then fallback to API."""
+    video_id = link.split('v=')[-1].split('&')[0]
+    download_folder = "downloads"
+    os.makedirs(download_folder, exist_ok=True)
+    
+    # Check if file already exists
+    for ext in ["mp3", "m4a", "webm", "opus"]:
+        file_path = os.path.join(download_folder, f"{video_id}.{ext}")
+        if os.path.exists(file_path):
+            return file_path
+    
+    # First try: Hardcoded cookies
+    cookie_file = get_hardcoded_cookie_file()
+    if cookie_file:
+        loop = asyncio.get_running_loop()
+        
+        def _download_with_cookies():
+            try:
+                ydl_opts = {
+                    "format": "bestaudio/best",
+                    "outtmpl": os.path.join(download_folder, f"{video_id}.%(ext)s"),
+                    "geo_bypass": True,
+                    "nocheckcertificate": True,
+                    "quiet": True,
+                    "cookiefile": cookie_file,
+                    "no_warnings": True,
+                    "postprocessors": [{
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "192",
+                    }],
+                }
+                ydl = yt_dlp.YoutubeDL(ydl_opts)
+                info = ydl.extract_info(link, download=False)
+                file_path = os.path.join(download_folder, f"{info['id']}.mp3")
+                if os.path.exists(file_path):
+                    return file_path
+                ydl.download([link])
+                return file_path
+            except Exception as e:
+                print(f"Hardcoded cookie download failed: {e}")
+                return None
+        
+        try:
+            file_path = await loop.run_in_executor(None, _download_with_cookies)
+            if file_path and os.path.exists(file_path):
+                return file_path
+        except Exception as e:
+            print(f"Error with hardcoded cookies: {e}")
+    
+    # Fallback: Try API
+    print("Falling back to API download for song...")
+    return await download_via_api(link, "audio")
+
+async def download_video(link: str):
+    """Download video - try hardcoded cookies first, then fallback to API."""
+    video_id = link.split('v=')[-1].split('&')[0]
+    download_folder = "downloads"
+    os.makedirs(download_folder, exist_ok=True)
+    
+    # Check if file already exists
+    for ext in ["mp4", "webm", "mkv"]:
+        file_path = os.path.join(download_folder, f"{video_id}.{ext}")
+        if os.path.exists(file_path):
+            return file_path
+    
+    # First try: Hardcoded cookies
+    cookie_file = get_hardcoded_cookie_file()
+    if cookie_file:
+        loop = asyncio.get_running_loop()
+        
+        def _download_with_cookies():
+            try:
+                ydl_opts = {
+                    "format": "(bestvideo[height<=?720][width<=?1280][ext=mp4])+(bestaudio[ext=m4a])",
+                    "outtmpl": os.path.join(download_folder, f"{video_id}.%(ext)s"),
+                    "geo_bypass": True,
+                    "nocheckcertificate": True,
+                    "quiet": True,
+                    "cookiefile": cookie_file,
+                    "no_warnings": True,
+                    "prefer_ffmpeg": True,
+                    "merge_output_format": "mp4",
+                }
+                ydl = yt_dlp.YoutubeDL(ydl_opts)
+                info = ydl.extract_info(link, download=False)
+                file_path = os.path.join(download_folder, f"{info['id']}.mp4")
+                if os.path.exists(file_path):
+                    return file_path
+                ydl.download([link])
+                return file_path
+            except Exception as e:
+                print(f"Hardcoded cookie download failed: {e}")
+                return None
+        
+        try:
+            file_path = await loop.run_in_executor(None, _download_with_cookies)
+            if file_path and os.path.exists(file_path):
+                return file_path
+        except Exception as e:
+            print(f"Error with hardcoded cookies: {e}")
+    
+    # Fallback: Try API
+    print("Falling back to API download for video...")
+    return await download_via_api(link, "video")
+
+async def check_file_size(link):
+    async def get_format_info(link):
+        # Try hardcoded cookies first
+        cookie_file = get_hardcoded_cookie_file()
+        if not cookie_file:
+            cookie_file = cookie_txt_file()
+        if not cookie_file:
+            print("No cookies found. Cannot check file size.")
+            return None
+            
+        proc = await asyncio.create_subprocess_exec(
+            "yt-dlp",
+            "--cookies", cookie_file,
+            "-J",
+            link,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            print(f'Error:\n{stderr.decode()}')
+            return None
+        return json.loads(stdout.decode())
+
+    def parse_size(formats):
+        total_size = 0
+        for format in formats:
+            if 'filesize' in format:
+                total_size += format['filesize']
+        return total_size
+
+    info = await get_format_info(link)
+    if info is None:
+        return None
+    
+    formats = info.get('formats', [])
+    if not formats:
+        print("No formats found.")
+        return None
+    
+    total_size = parse_size(formats)
+    return total_size
+
+async def shell_cmd(cmd):
+    proc = await asyncio.create_subprocess_shell(
+        cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, errorz = await proc.communicate()
+    if errorz:
+        if "unavailable videos are hidden" in (errorz.decode("utf-8")).lower():
+            return out.decode("utf-8")
+        else:
+            return errorz.decode("utf-8")
+    return out.decode("utf-8")
+
+
+class YouTubeAPI:
+    def __init__(self):
+        self.base = "https://www.youtube.com/watch?v="
+        self.regex = r"(?:youtube\.com|youtu\.be)"
+        self.status = "https://www.youtube.com/oembed?url="
+        self.listbase = "https://youtube.com/playlist?list="
+        self.reg = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+    async def exists(self, link: str, videoid: Union[bool, str] = None):
+        if videoid:
+            link = self.base + link
+        if re.search(self.regex, link):
+            return True
+        else:
+            return False
+
+    async def url(self, message_1: Message) -> Union[str, None]:
+        messages = [message_1]
+        if message_1.reply_to_message:
+            messages.append(message_1.reply_to_message)
+        text = ""
+        offset = None
+        length = None
+        for message in messages:
+            if offset:
+                break
+            if message.entities:
+                for entity in message.entities:
+                    if entity.type == MessageEntityType.URL:
+                        text = message.text or message.caption
+                        offset, length = entity.offset, entity.length
+                        break
+            elif message.caption_entities:
+                for entity in message.caption_entities:
+                    if entity.type == MessageEntityType.TEXT_LINK:
+                        return entity.url
+        if offset in (None,):
+            return None
+        umm = text[offset : offset + length]
+        if "?si=" in umm:
+            umm = umm.split("?si=")[0]
+        return umm
+
+    async def details(self, link: str, videoid: Union[bool, str] = None):
+        if videoid:
+            link = self.base + link
+        if "&" in link:
+            link = link.split("&")[0]
+        results = VideosSearch(link, limit=1)
+        for result in (await results.next())["result"]:
+            title = result["title"]
+            duration_min = result["duration"]
+            thumbnail = result["thumbnails"][0]["url"].split("?")[0]
+            vidid = result["id"]
+            if str(duration_min) == "None":
+                duration_sec = 0
+            else:
+                duration_sec = int(time_to_seconds(duration_min))
+        return title, duration_min, duration_sec, thumbnail, vidid
+
+    async def title(self, link: str, videoid: Union[bool, str] = None):
+        if videoid:
+            link = self.base + link
+        if "&" in link:
+            link = link.split("&")[0]
+        results = VideosSearch(link, limit=1)
+        for result in (await results.next())["result"]:
+            title = result["title"]
+        return title
+
+    async def duration(self, link: str, videoid: Union[bool, str] = None):
+        if videoid:
+            link = self.base + link
+        if "&" in link:
+            link = link.split("&")[0]
+        results = VideosSearch(link, limit=1)
+        for result in (await results.next())["result"]:
+            duration = result["duration"]
+        return duration
+
+    async def thumbnail(self, link: str, videoid: Union[bool, str] = None):
+        if videoid:
+            link = self.base + link
+        if "&" in link:
+            link = link.split("&")[0]
+        results = VideosSearch(link, limit=1)
+        for result in (await results.next())["result"]:
+            thumbnail = result["thumbnails"][0]["url"].split("?")[0]
+        return thumbnail
+
+    async def video(self, link: str, videoid: Union[bool, str] = None):
+        if videoid:
+            link = self.base + link
+        if "&" in link:
+            link = link.split("&")[0]
+        
+        # Try hardcoded cookies first
+        cookie_file = get_hardcoded_cookie_file()
+        if not cookie_file:
+            cookie_file = cookie_txt_file()
+        if not cookie_file:
+            # Fallback to API
+            try:
+                downloaded_file = await download_video(link)
+                if downloaded_file:
+                    return 1, downloaded_file
+                else:
+                    return 0, "Video download failed"
+            except Exception as e:
+                return 0, f"Video download error: {e}"
+            
+        proc = await asyncio.create_subprocess_exec(
+            "yt-dlp",
+            "--cookies", cookie_file,
+            "-g",
+            "-f",
+            "best[height<=?720][width<=?1280]",
+            f"{link}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if stdout:
+            return 1, stdout.decode().split("\n")[0]
+        else:
+            # Fallback to API if cookie method fails
+            try:
+                downloaded_file = await download_video(link)
+                if downloaded_file:
+                    return 1, downloaded_file
+            except:
+                pass
+            return 0, stderr.decode()
+
+    async def playlist(self, link, limit, user_id, videoid: Union[bool, str] = None):
+        if videoid:
+            link = self.listbase + link
+        try:
+            plist = await Playlist.get(link)
+        except:
+            return []
+
+        videos = plist.get("videos") or []
+        ids: list[str] = []
+        for data in videos[:limit]:
+            if not data:
+                continue
+            vid = data.get("id")
+            if not vid:
+                continue
+            ids.append(vid)
+        return ids
+
+    async def track(self, link: str, videoid: Union[bool, str] = None):
+        if videoid:
+            link = self.base + link
+        if "&" in link:
+            link = link.split("&")[0]
+        results = VideosSearch(link, limit=1)
+        for result in (await results.next())["result"]:
+            title = result["title"]
+            duration_min = result["duration"]
+            vidid = result["id"]
+            yturl = result["link"]
+            thumbnail = result["thumbnails"][0]["url"].split("?")[0]
+        track_details = {
+            "title": title,
+            "link": yturl,
+            "vidid": vidid,
+            "duration_min": duration_min,
+            "thumb": thumbnail,
+        }
+        return track_details, vidid
+
+    async def formats(self, link: str, videoid: Union[bool, str] = None):
+        if videoid:
+            link = self.base + link
+        if "&" in link:
+            link = link.split("&")[0]
+        
+        # Try hardcoded cookies first
+        cookie_file = get_hardcoded_cookie_file()
+        if not cookie_file:
+            cookie_file = cookie_txt_file()
+        if not cookie_file:
+            return [], link
+            
+        ytdl_opts = {"quiet": True, "cookiefile" : cookie_file}
+        ydl = yt_dlp.YoutubeDL(ytdl_opts)
+        with ydl:
+            formats_available = []
+            r = ydl.extract_info(link, download=False)
+            for format in r["formats"]:
+                try:
+                    str(format["format"])
+                except:
+                    continue
+                if not "dash" in str(format["format"]).lower():
+                    try:
+                        format["format"]
+                        format["filesize"]
+                        format["format_id"]
+                        format["ext"]
+                        format["format_note"]
+                    except:
+                        continue
+                    formats_available.append(
+                        {
+                            "format": format["format"],
+                            "filesize": format["filesize"],
+                            "format_id": format["format_id"],
+                            "ext": format["ext"],
+                            "format_note": format["format_note"],
+                            "yturl": link,
+                        }
+                    )
+        return formats_available, link
+
+    async def slider(
+        self,
+        link: str,
+        query_type: int,
+        videoid: Union[bool, str] = None,
+    ):
+        if videoid:
+            link = self.base + link
+        if "&" in link:
+            link = link.split("&")[0]
+        a = VideosSearch(link, limit=10)
+        result = (await a.next()).get("result")
+        title = result[query_type]["title"]
+        duration_min = result[query_type]["duration"]
+        vidid = result[query_type]["id"]
+        thumbnail = result[query_type]["thumbnails"][0]["url"].split("?")[0]
+        return title, duration_min, thumbnail, vidid
+
+    async def download(
+        self,
+        link: str,
+        mystic,
+        video: Union[bool, str] = None,
+        videoid: Union[bool, str] = None,
+        songaudio: Union[bool, str] = None,
+        songvideo: Union[bool, str] = None,
+        format_id: Union[bool, str] = None,
+        title: Union[bool, str] = None,
+    ) -> str:
+        if videoid:
+            link = self.base + link
+        loop = asyncio.get_running_loop()
+        
+        def audio_dl():
+            # Try hardcoded cookies first
+            cookie_file = get_hardcoded_cookie_file()
+            if not cookie_file:
+                cookie_file = cookie_txt_file()
+            if not cookie_file:
+                raise Exception("No cookies found. Cannot download audio.")
+                
+            ydl_optssx = {
+                "format": "bestaudio/best",
+                "outtmpl": "downloads/%(id)s.%(ext)s",
+                "geo_bypass": True,
+                "nocheckcertificate": True,
+                "quiet": True,
+                "cookiefile" : cookie_file,
+                "no_warnings": True,
+            }
+            x = yt_dlp.YoutubeDL(ydl_optssx)
+            info = x.extract_info(link, False)
+            video_id = info['id']
+            
+            # Check for existing audio files (not video files)
+            audio_exts = ["mp3", "m4a", "opus", "webm", "ogg", "flac"]
+            video_exts = ["mp4", "mkv", "webm", "avi", "mov"]
+            
+            # First check if audio file exists
+            for ext in audio_exts:
+                check_path = os.path.join("downloads", f"{video_id}.{ext}")
+                if os.path.exists(check_path) and os.path.getsize(check_path) > 0:
+                    # Verify it's not actually a video file by checking if video extension exists
+                    is_video_file = False
+                    for v_ext in video_exts:
+                        v_path = os.path.join("downloads", f"{video_id}.{v_ext}")
+                        if os.path.exists(v_path) and os.path.getsize(v_path) > 0:
+                            is_video_file = True
+                            break
+                    if not is_video_file:
+                        return check_path
+            
+            # If no valid audio file found, download
+            xyz = os.path.join("downloads", f"{video_id}.{info.get('ext', 'mp3')}")
+            x.download([link])
+            return xyz
+
+        def video_dl():
+            # Try hardcoded cookies first
+            cookie_file = get_hardcoded_cookie_file()
+            if not cookie_file:
+                cookie_file = cookie_txt_file()
+            if not cookie_file:
+                raise Exception("No cookies found. Cannot download video.")
+                
+            ydl_optssx = {
+                "format": "(bestvideo[height<=?720][width<=?1280][ext=mp4])+(bestaudio[ext=m4a])",
+                "outtmpl": "downloads/%(id)s.%(ext)s",
+                "geo_bypass": True,
+                "nocheckcertificate": True,
+                "quiet": True,
+                "cookiefile" : cookie_file,
+                "no_warnings": True,
+                "prefer_ffmpeg": True,
+                "merge_output_format": "mp4",
+            }
+            x = yt_dlp.YoutubeDL(ydl_optssx)
+            info = x.extract_info(link, False)
+            video_id = info['id']
+            
+            # Check for existing video files (not audio files)
+            video_exts = ["mp4", "mkv", "webm", "avi", "mov"]
+            
+            # First check if video file exists
+            for ext in video_exts:
+                check_path = os.path.join("downloads", f"{video_id}.{ext}")
+                if os.path.exists(check_path) and os.path.getsize(check_path) > 0:
+                    # Verify it's actually a video file by checking file size
+                    file_size = os.path.getsize(check_path)
+                    # Video files are typically > 1MB, audio files are usually smaller
+                    if file_size > 1000000:  # At least 1MB to ensure it's video
+                        return check_path
+            
+            # If no valid video file found, download
+            # yt-dlp will merge video+audio and create mp4 file
+            x.download([link])
+            
+            # After download, check what file was actually created
+            # yt-dlp with merge_output_format="mp4" should create mp4 file
+            # But check all possible video extensions to be safe
+            xyz = os.path.join("downloads", f"{video_id}.mp4")
+            
+            # Check mp4 first (most common after merge)
+            if os.path.exists(xyz) and os.path.getsize(xyz) > 1000000:  # At least 1MB
+                return xyz
+            
+            # Check other video extensions
+            for ext in video_exts:
+                check_path = os.path.join("downloads", f"{video_id}.{ext}")
+                if os.path.exists(check_path) and os.path.getsize(check_path) > 1000000:
+                    return check_path
+            
+            # Check for any file with video_id in downloads folder (yt-dlp might use different naming)
+            try:
+                download_dir = "downloads"
+                if os.path.exists(download_dir):
+                    for filename in os.listdir(download_dir):
+                        if filename.startswith(video_id) and any(filename.endswith(f".{ext}") for ext in video_exts):
+                            full_path = os.path.join(download_dir, filename)
+                            if os.path.getsize(full_path) > 1000000:
+                                return full_path
+            except Exception as e:
+                print(f"Error checking downloads folder: {e}")
+            
+            # If still not found, check what yt-dlp actually created from info
+            if 'ext' in info:
+                fallback_path = os.path.join("downloads", f"{video_id}.{info['ext']}")
+                if os.path.exists(fallback_path) and os.path.getsize(fallback_path) > 1000000:
+                    return fallback_path
+            
+            # Last resort: return expected mp4 path
+            # If file doesn't exist, caller will handle the error
+            return xyz
+
+        def song_video_dl():
+            # Try hardcoded cookies first
+            cookie_file = get_hardcoded_cookie_file()
+            if not cookie_file:
+                cookie_file = cookie_txt_file()
+            if not cookie_file:
+                raise Exception("No cookies found. Cannot download song video.")
+                
+            formats = f"{format_id}+140"
+            fpath = f"downloads/{title}"
+            ydl_optssx = {
+                "format": formats,
+                "outtmpl": fpath,
+                "geo_bypass": True,
+                "nocheckcertificate": True,
+                "quiet": True,
+                "no_warnings": True,
+                "cookiefile" : cookie_file,
+                "prefer_ffmpeg": True,
+                "merge_output_format": "mp4",
+            }
+            x = yt_dlp.YoutubeDL(ydl_optssx)
+            x.download([link])
+
+        def song_audio_dl():
+            # Try hardcoded cookies first
+            cookie_file = get_hardcoded_cookie_file()
+            if not cookie_file:
+                cookie_file = cookie_txt_file()
+            if not cookie_file:
+                raise Exception("No cookies found. Cannot download song audio.")
+                
+            fpath = f"downloads/{title}.%(ext)s"
+            ydl_optssx = {
+                "format": format_id,
+                "outtmpl": fpath,
+                "geo_bypass": True,
+                "nocheckcertificate": True,
+                "quiet": True,
+                "no_warnings": True,
+                "cookiefile" : cookie_file,
+                "prefer_ffmpeg": True,
+                "postprocessors": [
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "192",
+                    }
+                ],
+            }
+            x = yt_dlp.YoutubeDL(ydl_optssx)
+            x.download([link])
+
+        if songvideo:
+            try:
+                downloaded_file = await loop.run_in_executor(None, song_video_dl)
+                direct = True
+                return downloaded_file, direct
+            except Exception as e:
+                print(f"Cookie download failed for song video: {e}")
+                # Fallback to API
+                downloaded_file = await download_via_api(link, "video")
+                if downloaded_file:
+                    return downloaded_file, True
+                return None, None
+        elif songaudio:
+            try:
+                downloaded_file = await loop.run_in_executor(None, song_audio_dl)
+                direct = True
+                return downloaded_file, direct
+            except Exception as e:
+                print(f"Cookie download failed for song audio: {e}")
+                # Fallback to API
+                downloaded_file = await download_via_api(link, "audio")
+                if downloaded_file:
+                    return downloaded_file, True
+                return None, None
+        elif video:
+            cookie_file = get_hardcoded_cookie_file()
+            if not cookie_file:
+                cookie_file = cookie_txt_file()
+            
+            if await is_on_off(1):
+                try:
+                    direct = True
+                    downloaded_file = await loop.run_in_executor(None, video_dl)
+                    if downloaded_file:
+                        return downloaded_file, direct
+                except Exception as e:
+                    print(f"Cookie download failed for video: {e}")
+                    # Fallback to API
+                    downloaded_file = await download_via_api(link, "video")
+                    if downloaded_file:
+                        return downloaded_file, True
+                    return None, None
+            else:
+                if cookie_file:
+                    proc = await asyncio.create_subprocess_exec(
+                        "yt-dlp",
+                        "--cookies", cookie_file,
+                        "-g",
+                        "-f",
+                        "best[height<=?720][width<=?1280]",
+                        f"{link}",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, stderr = await proc.communicate()
+                    if stdout:
+                        downloaded_file = stdout.decode().split("\n")[0]
+                        direct = False
+                        return downloaded_file, direct
+                
+                # Fallback to direct download or API
+                file_size = await check_file_size(link)
+                if not file_size:
+                    print("None file Size")
+                    # Try API fallback
+                    downloaded_file = await download_via_api(link, "video")
+                    if downloaded_file:
+                        return downloaded_file, True
+                    return None, None
+                total_size_mb = file_size / (1024 * 1024)
+                if total_size_mb > 250:
+                    print(f"File size {total_size_mb:.2f} MB exceeds the 250MB limit.")
+                    return None, None
+                try:
+                    direct = True
+                    downloaded_file = await loop.run_in_executor(None, video_dl)
+                    if downloaded_file:
+                        return downloaded_file, direct
+                except Exception as e:
+                    print(f"Cookie download failed: {e}")
+                    # Fallback to API
+                    downloaded_file = await download_via_api(link, "video")
+                    if downloaded_file:
+                        return downloaded_file, True
+                    return None, None
+        else:
+            try:
+                direct = True
+                downloaded_file = await loop.run_in_executor(None, audio_dl)
+                if downloaded_file:
+                    return downloaded_file, direct
+            except Exception as e:
+                print(f"Cookie download failed for audio: {e}")
+                # Fallback to API
+                downloaded_file = await download_via_api(link, "audio")
+                if downloaded_file:
+                    return downloaded_file, True
+                return None, None
+        return None, None
